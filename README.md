@@ -13,16 +13,17 @@
 | `uno_car/` | UNO R3 + BMP73T104 | **Pi-slave**：聽 `F/L/R/Z/S/X` 驅動馬達 |
 | `uno_car_legacy/` | 同上 | 舊版「只靠 UWB 直線跟隨」（備份） |
 
-## 新架構（建議）
+## 新架構（建議，無 USB-TTL）
 
 ```
 身上 Tag  --UWB DS-TWR-->  車上 Responder
-                              │ USB 115200（D:xx.xx）
+                              │ USB 115200
+                              │  ↑ 距離 D:xx.xx
+                              │  ↓ 馬達命令 F/L/R/Z/S/X
                               ▼
                          樹莓派 5 + Camera
-                         YOLO：人在左／中／右
-                         UWB：遠近
-                              │ USB-TTL 9600
+                              │
+         Responder GPIO17 ────┘ Serial2 轉發 @ 9600
                               ▼
                          UNO D10 ← 命令 F/L/R/Z/S/X
 ```
@@ -34,25 +35,22 @@
 - 人在畫面右 → `R` 右轉置中
 - 置中且 ≥ 2.0 m → `F` 前進
 - 置中且 < 1.8 m → `S` 停止
-- Pi 約 0.8 s 無命令 → UNO 緊急煞停
+- 約 0.8 s 無命令 → UNO 緊急煞停
 
-### UNO 接線（Pi-slave）
+### 接線
 
-| 來源 | UNO |
-|------|-----|
-| Pi 側 USB-TTL **TX** | D10 |
-| GND | GND |
-| 不要接 | D11 / 互相 5V |
+| 來源 | 接到 |
+|------|------|
+| 車上 ESP32 **USB** | 樹莓派 USB |
+| 車上 ESP32 **GPIO17 (TX2)** | UNO **D10** |
+| 車上 ESP32 **GND** | UNO **GND** |
+| 不要接 | 互相灌 5V；Pi GPIO 腳 8 可不接 |
 
-### 車上 ESP32 → Pi（距離）
+### USB 協定（Pi ↔ 車上 ESP32）
 
-- 最省事：車上 ESP32 **USB 插樹莓派**，鮑率 **115200**
-- 輸出示例：
-  ```
-  D:1.85
-  [CAR] 1.85 m
-  ```
-- Pi 解析 `D:` 開頭（也相容舊的 `[CAR]`）
+- ESP32 → Pi：`D:1.85`（距離）
+- Pi → ESP32：`F\n` / `L\n` / `R\n` / `Z\n` / `S\n` / `X\n`
+- ESP32 → UNO（Serial2）：同上單字母命令
 
 ### 天線 / 頻道
 
