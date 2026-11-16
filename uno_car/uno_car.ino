@@ -27,11 +27,12 @@ SoftwareSerial piSerial(10, 11); // RX=D10 <- Pi TX；TX=D11 不接
 const unsigned long CMD_TIMEOUT_MS = 1200;
 const unsigned long CMD_REFRESH_MS = 250;
 
-// 載重較重時可再往上調（上限約 100）
-// 注意：BMP73T104 單路約 1.1A、總電流約 4A，太大容易過流保護後「突然全停」
-const int BASE_FORWARD_SPEED = 90;
-const int BASE_TURN_SPEED = 75;
-const int BASE_SPIN_SPEED = 70;
+// 注意：BMP73T104 單路約 1.1A、總電流約 4A
+// 原地左右輪對拉最容易堵轉觸發過流，之後會「整台假死」直到清故障／重上電
+const int BASE_FORWARD_SPEED = 85;
+const int BASE_TURN_SPEED = 60;   // 轉向勿太大
+const int BASE_SPIN_SPEED = 50;   // 搜尋自轉更小
+const int BASE_TURN_INNER = 20;   // 內輪慢轉（弧線轉，比正反轉對拉省電流）
 
 // 規格書：I2C 指令間隔至少約 3ms；太短會出現有的輪轉有的不轉
 const unsigned int MOTOR_CMD_GAP_US = 4000;
@@ -121,18 +122,26 @@ void applyCommand(char cmd, bool force) {
     return;
   }
 
+  // 從停止進入運動前先清過流，避免保護鎖死後怎麼送命令都不轉
+  if (force && (activeCmd == CMD_STOP || activeCmd == CMD_BRAKE) &&
+      (cmd == CMD_FORWARD || cmd == CMD_LEFT || cmd == CMD_RIGHT || cmd == CMD_SPIN)) {
+    clearMotorFaults();
+    Serial.println(F("cleared OCP before move"));
+  }
+
   switch (cmd) {
     case CMD_FORWARD:
       applyDrive(BASE_FORWARD_SPEED, BASE_FORWARD_SPEED);
       break;
     case CMD_LEFT:
-      // 原地左轉：左退右進，讓鏡頭把左側的人轉回畫面中央
-      applyDrive(-BASE_TURN_SPEED, BASE_TURN_SPEED);
+      // 弧線左轉（內輪慢、外輪快），比左右對拉較不易過流
+      applyDrive(BASE_TURN_INNER, BASE_TURN_SPEED);
       break;
     case CMD_RIGHT:
-      applyDrive(BASE_TURN_SPEED, -BASE_TURN_SPEED);
+      applyDrive(BASE_TURN_SPEED, BASE_TURN_INNER);
       break;
     case CMD_SPIN:
+      // 搜尋才用慢速原地轉
       applyDrive(-BASE_SPIN_SPEED, BASE_SPIN_SPEED);
       break;
     case CMD_BRAKE:
