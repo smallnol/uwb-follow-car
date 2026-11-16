@@ -24,13 +24,17 @@
 
 SoftwareSerial piSerial(10, 11); // RX=D10 <- Pi TX；TX=D11 不接
 
-const unsigned long CMD_TIMEOUT_MS = 800;
-const unsigned long CMD_REFRESH_MS = 200;
+const unsigned long CMD_TIMEOUT_MS = 1200;
+const unsigned long CMD_REFRESH_MS = 250;
 
 // 載重較重時可再往上調（上限約 100）
-const int BASE_FORWARD_SPEED = 95;
-const int BASE_TURN_SPEED = 85;
-const int BASE_SPIN_SPEED = 80;
+// 注意：BMP73T104 單路約 1.1A、總電流約 4A，太大容易過流保護後「突然全停」
+const int BASE_FORWARD_SPEED = 90;
+const int BASE_TURN_SPEED = 75;
+const int BASE_SPIN_SPEED = 70;
+
+// 規格書：I2C 指令間隔至少約 3ms；太短會出現有的輪轉有的不轉
+const unsigned int MOTOR_CMD_GAP_US = 4000;
 
 BMP73T104 myM1(2, DCMotor); // 左後
 BMP73T104 myM2(2, DCMotor); // 右後
@@ -65,7 +69,7 @@ unsigned long lastApplyTime = 0;
 void setSingleMotorSafe(BMP73T104 &motor, int rawSpeed, float trim, int dir) {
   int targetSpeed = constrain((int)(rawSpeed * trim * dir), -100, 100);
   motor.dcMotorRun(targetSpeed);
-  delayMicroseconds(800);
+  delayMicroseconds(MOTOR_CMD_GAP_US);
 }
 
 void setLeftMotors(int speed) {
@@ -84,14 +88,27 @@ void applyDrive(int leftSpeed, int rightSpeed) {
   lastApplyTime = millis();
 }
 
+void clearMotorFaults() {
+  // 載重堵轉後可能卡在過流狀態；定期清一次
+  myM1.clearOverCurrent();
+  delayMicroseconds(MOTOR_CMD_GAP_US);
+  myM2.clearOverCurrent();
+  delayMicroseconds(MOTOR_CMD_GAP_US);
+  myM3.clearOverCurrent();
+  delayMicroseconds(MOTOR_CMD_GAP_US);
+  myM4.clearOverCurrent();
+  delayMicroseconds(MOTOR_CMD_GAP_US);
+}
+
 void emergencyBrake() {
   myM1.dcMotorBrake();
-  delayMicroseconds(800);
+  delayMicroseconds(MOTOR_CMD_GAP_US);
   myM2.dcMotorBrake();
-  delayMicroseconds(800);
+  delayMicroseconds(MOTOR_CMD_GAP_US);
   myM3.dcMotorBrake();
-  delayMicroseconds(800);
+  delayMicroseconds(MOTOR_CMD_GAP_US);
   myM4.dcMotorBrake();
+  delayMicroseconds(MOTOR_CMD_GAP_US);
   lastApplyTime = millis();
 }
 
@@ -186,6 +203,7 @@ void setup() {
   myM2.begin(M2); delay(100);
   myM3.begin(M3); delay(100);
   myM4.begin(M4); delay(100);
+  clearMotorFaults();
 
   emergencyBrake();
   activeCmd = CMD_STOP;
@@ -193,9 +211,12 @@ void setup() {
 
   Serial.println(F("=== UNO Pi-slave 馬達控制就緒 ==="));
   Serial.println(F("命令: F/L/R/Z/S/X （Pi -> D10 @ 9600）"));
+  Serial.println(F("供電建議: 18650->BMP73T104，短接 VIN jumper 給 UNO；勿用行充分開供電"));
 }
 
 void loop() {
+  static unsigned long lastFaultClear = 0;
+
   pollPiCommands();
 
   // 逾時無命令 → 緊急煞停
@@ -210,5 +231,10 @@ void loop() {
   if (activeCmd == CMD_FORWARD || activeCmd == CMD_LEFT ||
       activeCmd == CMD_RIGHT || activeCmd == CMD_SPIN) {
     applyCommand(activeCmd, false);
+    // 約每秒清一次過流旗標，避免堵轉後整台「假死」
+    if (millis() - lastFaultClear > 1000) {
+      clearMotorFaults();
+      lastFaultClear = millis();
+    }
   }
 }
