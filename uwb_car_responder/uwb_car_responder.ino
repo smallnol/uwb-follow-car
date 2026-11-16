@@ -1,11 +1,17 @@
 /*
  * 車上 ESP32-UWB = DS-TWR Responder
  * 收 POLL / 回 RESP / 收 FINAL → 算距離
- * Serial2 TX GPIO17 → UNO D10（9600）
- * USB 除錯：115200
+ *
+ * USB（115200，接樹莓派）：
+ *   輸出距離：D:1.85
+ *   接收馬達命令：F/L/R/Z/S/X（Pi 寫入同一 USB）
+ *
+ * Serial2 TX GPIO17 → UNO D10（9600）：
+ *   只轉傳馬達命令，不再送距離數字
  */
 #include "dw3000.h"
 #include <algorithm>
+#include <ctype.h>
 
 const uint8_t PIN_RST = 27;
 const uint8_t PIN_IRQ = 34;
@@ -63,11 +69,47 @@ void msg_get_ts(const uint8_t *ts_field, uint32_t *ts) {
   }
 }
 
+bool is_motor_cmd(char c) {
+  char u = toupper(c);
+  return u == 'F' || u == 'L' || u == 'R' || u == 'Z' || u == 'S' || u == 'X';
+}
+
+// 從 USB（Pi）讀馬達命令，轉發到 Serial2 → UNO D10
+void pollUsbMotorCmds() {
+  static char buf[16];
+  static uint8_t idx = 0;
+
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (idx == 0) continue;
+      buf[idx] = '\0';
+      idx = 0;
+
+      for (uint8_t i = 0; buf[i] != '\0'; i++) {
+        if (is_motor_cmd(buf[i])) {
+          char cmd = (char)toupper(buf[i]);
+          Serial2.print(cmd);
+          Serial2.print('\n');
+          Serial.print(F("FWD->UNO "));
+          Serial.println(cmd);
+          break;
+        }
+      }
+    } else if (idx < sizeof(buf) - 1) {
+      buf[idx++] = c;
+    } else {
+      idx = 0;
+    }
+  }
+}
+
 void setup() {
   Serial.begin(115200);
-  Serial2.begin(9600, SERIAL_8N1, 16, 17);
+  Serial2.begin(9600, SERIAL_8N1, 16, 17); // RX=16(不用), TX=17 → UNO D10
   delay(1000);
   Serial.println(F("--- 車上 Anchor = DS-TWR Responder ---"));
+  Serial.println(F("USB: 距離 D:xx.xx ｜ 收馬達命令轉 Serial2"));
 
   spiBegin(PIN_IRQ, PIN_RST);
   spiSelect(PIN_SS);
@@ -88,6 +130,9 @@ void setup() {
 }
 
 void loop() {
+  // 優先處理 Pi 馬達命令，避免 UWB 忙碌時轉彎延遲太大
+  pollUsbMotorCmds();
+
   uint64_t poll_rx_ts, resp_tx_ts, final_rx_ts;
   uint32_t poll_tx_ts, resp_rx_ts, final_tx_ts;
   uint32_t resp_tx_time;
@@ -100,6 +145,7 @@ void loop() {
   uint32_t guard = millis();
   while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) &
            (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_ERR))) {
+    pollUsbMotorCmds();
     if (millis() - guard > 50) return;
   }
 
@@ -133,6 +179,7 @@ void loop() {
   guard = millis();
   while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) &
            (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {
+    pollUsbMotorCmds();
     if (millis() - guard > 30) break;
   }
 
@@ -163,8 +210,9 @@ void loop() {
           float raw = (float)(tof * DWT_TIME_UNITS * SPEED_OF_LIGHT);
           float distance;
           if (apply_smart_filter(raw, &distance)) {
+            Serial.printf("D:%.2f\n", distance);
             Serial.printf("[CAR] %.2f m\n", distance);
-            Serial2.println(distance, 2);
+            // 距離只走 USB 給 Pi；Serial2 專給馬達命令
           }
         }
       }
