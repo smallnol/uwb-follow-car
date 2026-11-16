@@ -27,9 +27,10 @@ SoftwareSerial piSerial(10, 11); // RX=D10 <- Pi TX；TX=D11 不接
 const unsigned long CMD_TIMEOUT_MS = 800;
 const unsigned long CMD_REFRESH_MS = 200;
 
-const int BASE_FORWARD_SPEED = 75;
-const int BASE_TURN_SPEED = 55;
-const int BASE_SPIN_SPEED = 50;
+// 載重較重時可再往上調（上限約 100）
+const int BASE_FORWARD_SPEED = 95;
+const int BASE_TURN_SPEED = 85;
+const int BASE_SPIN_SPEED = 80;
 
 BMP73T104 myM1(2, DCMotor); // 左後
 BMP73T104 myM2(2, DCMotor); // 右後
