@@ -1,8 +1,14 @@
 /*
  * 車上 ESP32-UWB = DS-TWR Responder
  * 收 POLL / 回 RESP / 收 FINAL → 算距離
- * Serial2 TX GPIO17 → UNO D10（9600）
- * USB 除錯：115200
+ *
+ * 輸出（建議 USB 接到樹莓派解析）：
+ *   D:1.85          ← Pi 用
+ *   [CAR] 1.85 m    ← 人工監看
+ * Serial2（GPIO17 TX, 9600）同步輸出 D:xx.xx
+ *   新架構：可不接 UNO（改由 Pi 下馬達命令）
+ *   舊架構：可接 UNO D10（見 uno_car_legacy）
+ * USB 監看：115200
  */
 #include "dw3000.h"
 #include <algorithm>
@@ -163,8 +169,12 @@ void loop() {
           float raw = (float)(tof * DWT_TIME_UNITS * SPEED_OF_LIGHT);
           float distance;
           if (apply_smart_filter(raw, &distance)) {
+            // 給樹莓派解析（USB 115200）：D:1.85
+            // 同時保留舊格式，方便 Serial Monitor 人工監看
+            Serial.printf("D:%.2f\n", distance);
             Serial.printf("[CAR] %.2f m\n", distance);
-            Serial2.println(distance, 2);
+            // Serial2 仍可接 UNO 或經 USB-TTL／電位轉換接到 Pi UART
+            Serial2.printf("D:%.2f\n", distance);
           }
         }
       }
